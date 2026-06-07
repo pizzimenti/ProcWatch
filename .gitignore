@@ -1,0 +1,14 @@
+# Runtime artifacts (these live under %ProgramData%\ProcWatch, not the repo)
+*.log
+*.log.1
+config.json
+
+# Local test scratch
+test/sandbox/
+*.tmp
+
+# Editor / OS cruft
+.vscode/
+.idea/
+Thumbs.db
+desktop.ini
