@@ -1,0 +1,15 @@
+# Normalize line endings deterministically across machines.
+# Stored as LF in the repo; checked out per the rules below.
+* text=auto
+
+# PowerShell is Windows-native here: keep CRLF in working copies.
+*.ps1  text eol=crlf
+*.psm1 text eol=crlf
+
+# Docs and data: LF.
+*.md   text eol=lf
+*.json text eol=lf
+
+# Never normalize binaries (future-proofing).
+*.png  binary
+*.ico  binary
