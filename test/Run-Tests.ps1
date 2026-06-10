@@ -120,6 +120,45 @@ try {
         # safety net in case the engine somehow did not kill it
         Stop-Process -Id $rhog.Id -Force -ErrorAction SilentlyContinue
     }
+
+    Write-Host "`n[6] Engine heartbeat (status.json)"
+    # After a clean MaxIterations exit the engine leaves the 'stopped' marker
+    # (version + heartbeat, no live counts) - so assert presence here...
+    Check 'engine left a heartbeat file (version + heartbeat)' {
+        $st = Get-PWStatus
+        $st -and $st.version -and $st.heartbeat
+    }
+    # ...and validate full field fidelity via a direct round-trip of the helper.
+    Check 'Write/Get-PWStatus round-trips watching + lastBreach' {
+        Write-PWStatus @{ version='9.9.9'; watching=42; breachCount=3
+                          heartbeat=(Get-Date).ToString('o')
+                          lastBreach=@{ name='x'; rate=88; at=(Get-Date).ToString('o') } }
+        $s = Get-PWStatus
+        $s.version -eq '9.9.9' -and $s.watching -eq 42 -and $s.lastBreach.name -eq 'x'
+    }
+
+    Write-Host "`n[7] Pause/Resume gates detection"
+    Get-PWNotifyFiles | Remove-Item -Force -ErrorAction SilentlyContinue
+    $c = Get-PWConfig
+    $c.ignoreNames = @(); $c.restartAllowlist = @(); $c.paused = $false
+    $c.intervalSeconds = 2; $c.durationSeconds = 4; $c.graceSeconds = 0
+    $c.thresholdPercent = 50; $c.cpuBasis = 'core'
+    Save-PWConfig $c
+    New-PWCommand @{ type = 'pause' } | Out-Null
+    & (Join-Path $bin 'Engine.ps1') -MaxIterations 7 | Out-Null
+    Check 'pause command set config.paused = true' { (Get-PWConfig).paused -eq $true }
+    Check 'no breach notify while paused' {
+        $n = Get-PWNotifyFiles | ForEach-Object { Get-Content $_.FullName -Raw | ConvertFrom-Json }
+        ($n | Where-Object { $_.kind -eq 'breach' -and $_.pid -eq $hog.Id }).Count -eq 0
+    }
+    Get-PWNotifyFiles | Remove-Item -Force -ErrorAction SilentlyContinue
+    New-PWCommand @{ type = 'resume' } | Out-Null
+    & (Join-Path $bin 'Engine.ps1') -MaxIterations 7 | Out-Null
+    Check 'resume command cleared config.paused' { (Get-PWConfig).paused -eq $false }
+    Check 'breach notify fires again after resume' {
+        $n = Get-PWNotifyFiles | ForEach-Object { Get-Content $_.FullName -Raw | ConvertFrom-Json }
+        ($n | Where-Object { $_.kind -eq 'breach' -and $_.pid -eq $hog.Id }).Count -ge 1
+    }
 }
 finally {
     if ($hog) { Stop-Process -Id $hog.Id -Force -ErrorAction SilentlyContinue }

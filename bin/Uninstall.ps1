@@ -10,7 +10,8 @@ if (-not $p.IsInRole([Security.Principal.WindowsBuiltinRole]::Administrator)) {
     throw 'Uninstall.ps1 must be run elevated.'
 }
 
-foreach ($t in 'ProcWatch-Engine','ProcWatch-Agent') {
+# includes the pre-0.2.0 'ProcWatch-Agent' name so upgrades-then-uninstall stay clean
+foreach ($t in 'ProcWatch-Engine','ProcWatch-Tray','ProcWatch-Agent') {
     if (Get-ScheduledTask -TaskName $t -ErrorAction SilentlyContinue) {
         Stop-ScheduledTask  -TaskName $t -ErrorAction SilentlyContinue
         Unregister-ScheduledTask -TaskName $t -Confirm:$false -ErrorAction SilentlyContinue
@@ -18,9 +19,9 @@ foreach ($t in 'ProcWatch-Engine','ProcWatch-Agent') {
     }
 }
 
-# stop a still-running engine (mutex-held loop)
+# stop any still-running engine/tray/agent (mutex-held loops)
 Get-CimInstance Win32_Process -Filter "Name='pwsh.exe' OR Name='powershell.exe'" |
-    Where-Object { $_.CommandLine -match 'ProcWatch\\bin\\(Engine|Agent)\.ps1' } |
+    Where-Object { $_.CommandLine -match 'ProcWatch\\bin\\(Engine|Tray|Agent)\.ps1' } |
     ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue; Write-Host "Stopped pid $($_.ProcessId)" }
 
 if (Test-Path 'HKLM:\SOFTWARE\Classes\procwatch') {

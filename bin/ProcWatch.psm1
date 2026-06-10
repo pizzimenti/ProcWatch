@@ -4,9 +4,16 @@
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
+# ---- Version ---------------------------------------------------------------
+# Single source of truth for the product version (shown in the tray's About box
+# and stamped into the heartbeat). Keep in sync with the VERSION file and tags.
+$script:Version = '0.2.0'
+function Get-PWVersion { $script:Version }
+
 # ---- Paths -----------------------------------------------------------------
 $script:Root       = Join-Path $env:ProgramData 'ProcWatch'
 $script:ConfigPath = Join-Path $script:Root 'config.json'
+$script:StatusPath = Join-Path $script:Root 'status.json'   # engine heartbeat (engine writes, tray reads)
 $script:QueueNotify   = Join-Path $script:Root 'queue\notify'
 $script:QueueCommands = Join-Path $script:Root 'queue\commands'
 
@@ -30,6 +37,7 @@ function Get-PWDefaultConfig {
         restartCooldownSeconds = 300    # min gap between auto-restarts of the same name
         maxRestartsPerHour     = 4      # circuit-breaker on restart loops
         restartAllowlist       = @('explorer')
+        paused                 = $false # when true the engine samples but takes no action (tray Pause/Resume)
         ignoreNames            = @()    # never alert on these process names (managed via Whitelist button)
         protectNames           = @('System','Idle','Registry','Memory Compression','csrss','wininit',
                                     'services','lsass','smss','winlogon','fontdrvhost','dwm','MsMpEng')
@@ -63,6 +71,23 @@ function Save-PWConfig {
     $tmp = "$script:ConfigPath.tmp"
     $Config | ConvertTo-Json -Depth 6 | Set-Content -Path $tmp -Encoding UTF8
     Move-Item -Path $tmp -Destination $script:ConfigPath -Force
+}
+
+# ---- Status heartbeat (engine -> tray) -------------------------------------
+# The tray runs as the logged-in user and cannot inspect the SYSTEM engine's
+# memory, so the engine publishes a small heartbeat file each loop. The tray
+# treats a stale heartbeat (older than a few intervals) as "engine down".
+function Write-PWStatus {
+    param([Parameter(Mandatory)][hashtable]$Status)
+    Initialize-PWDirs
+    $tmp = "$script:StatusPath.tmp"
+    ($Status | ConvertTo-Json -Depth 6) | Set-Content -Path $tmp -Encoding UTF8
+    Move-Item -Path $tmp -Destination $script:StatusPath -Force
+}
+
+function Get-PWStatus {
+    if (-not (Test-Path $script:StatusPath)) { return $null }
+    try { Get-Content $script:StatusPath -Raw | ConvertFrom-Json } catch { $null }
 }
 
 # ---- Logging ---------------------------------------------------------------
@@ -153,6 +178,6 @@ function Get-PWCommandFiles {
     Get-ChildItem $script:QueueCommands -Filter '*.json' -File | Sort-Object LastWriteTime
 }
 
-Export-ModuleMember -Function Get-PWRoot, Initialize-PWDirs, Get-PWDefaultConfig, Get-PWConfig,
-    Save-PWConfig, Write-PWLog, Register-PWEventSource, Write-PWEvent,
+Export-ModuleMember -Function Get-PWRoot, Get-PWVersion, Initialize-PWDirs, Get-PWDefaultConfig, Get-PWConfig,
+    Save-PWConfig, Write-PWStatus, Get-PWStatus, Write-PWLog, Register-PWEventSource, Write-PWEvent,
     New-PWNotify, Get-PWNotifyFiles, New-PWCommand, Get-PWCommandFiles
