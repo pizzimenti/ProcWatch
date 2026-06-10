@@ -33,6 +33,11 @@ if ($st) {
         watching    = $st.watching
         breaches    = $st.breachCount
         lastBreach  = if ($st.lastBreach) { "$($st.lastBreach.name) @ $($st.lastBreach.rate)% ($($st.lastBreach.at))" } else { '(none)' }
+        top         = if ($st.top) {
+                          (@($st.top) | ForEach-Object {
+                              "{0} {1}%{2}" -f $_.name, $_.pct, $(if ($_.alive) { '' } else { ' (ended)' })
+                          }) -join ', '
+                      } else { '(n/a)' }
     } | Format-List
 } else { Write-Host '  (no heartbeat yet)' }
 

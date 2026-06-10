@@ -45,6 +45,12 @@ privilege):
 - 🟡 **amber** — paused, or within 60 s of a breach
 - ⚪ **grey** — engine down / heartbeat stale (older than 3 sampling intervals)
 
+**Left-click** opens a small flyout with the **top 3 processes of the last
+60 seconds by overall compute** (machine-wide %). A process that burned CPU in
+the window but has since exited stays listed, muted grey and marked *ended* —
+only the engine's rolling history can show that. The data comes from the
+heartbeat, and keeps flowing even while monitoring is paused.
+
 Right-click menu: **Pause/Resume monitoring**, **Edit config**, **Open logs
 folder**, **Recent activity**, **About**, **Exit**. Double-click opens the logs
 folder. Pause/Resume is performed by the SYSTEM engine — the tray only enqueues a

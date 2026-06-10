@@ -123,6 +123,76 @@ $miExit.add_Click({ $script:Ni.Visible = $false; [System.Windows.Forms.Applicati
 # double-click opens the logs folder
 $ni.add_MouseDoubleClick({ Start-Process explorer.exe (Get-PWRoot) })
 
+# ---- top-processes popup (left-click) ---------------------------------------
+# A small borderless flyout listing the top consumers over the engine's rolling
+# window (heartbeat 'top'). Rows for processes that burned CPU in the window but
+# have since exited render muted grey. Hides on focus loss, click, or timeout.
+$popup = New-Object System.Windows.Forms.Form
+$popup.FormBorderStyle = 'None'
+$popup.ShowInTaskbar   = $false
+$popup.TopMost         = $true
+$popup.StartPosition   = 'Manual'
+$popup.BackColor       = [System.Drawing.Color]::FromArgb(32, 32, 32)
+$popup.Size            = New-Object System.Drawing.Size 300, 112
+
+$popTitle = New-Object System.Windows.Forms.Label
+$popTitle.AutoSize = $false
+$popTitle.SetBounds(12, 8, 276, 18)
+$popTitle.Font      = New-Object System.Drawing.Font('Segoe UI', 8.5, [System.Drawing.FontStyle]::Bold)
+$popTitle.ForeColor = [System.Drawing.Color]::FromArgb(150, 150, 150)
+$popup.Controls.Add($popTitle)
+
+$popRows = @(0, 1, 2 | ForEach-Object {
+    $l = New-Object System.Windows.Forms.Label
+    $l.AutoSize = $false
+    $l.SetBounds(12, 30 + $_ * 25, 276, 20)
+    $l.Font = New-Object System.Drawing.Font('Segoe UI', 9.5)
+    $popup.Controls.Add($l)
+    $l
+})
+
+$popupHide = New-Object System.Windows.Forms.Timer
+$popupHide.Interval = 8000
+$popupHide.add_Tick({ $popupHide.Stop(); $popup.Hide() })
+$popup.add_Deactivate({ $popupHide.Stop(); $popup.Hide() })
+$popup.add_Click({ $popupHide.Stop(); $popup.Hide() })
+
+function Show-TopPopup {
+    $st  = Get-PWStatus
+    $top = if ($st) { @($st.top) } else { @() }
+    $win = if ($st -and $st.topWindow) { $st.topWindow } else { 60 }
+    $popTitle.Text = "TOP CPU - LAST $win s (machine-wide)"
+    for ($i = 0; $i -lt 3; $i++) {
+        $l = $popRows[$i]
+        if ($i -lt $top.Count -and $top[$i]) {
+            $t = $top[$i]
+            $name = if ($t.name.Length -gt 22) { $t.name.Substring(0, 21) + '…' } else { $t.name }
+            $l.Text = "{0,5:n1}%  {1}  (pid {2}){3}" -f $t.pct, $name, $t.pid, $(if ($t.alive) { '' } else { '  - ended' })
+            $l.ForeColor = if ($t.alive) { [System.Drawing.Color]::FromArgb(230, 230, 230) }
+                           else          { [System.Drawing.Color]::FromArgb(120, 120, 120) }
+        } else {
+            $l.Text = if ($i -eq 0) { '(no data from engine yet)' } else { '' }
+            $l.ForeColor = [System.Drawing.Color]::FromArgb(120, 120, 120)
+        }
+    }
+    # place near the cursor, clamped to the working area (above the taskbar)
+    $pos = [System.Windows.Forms.Cursor]::Position
+    $wa  = [System.Windows.Forms.Screen]::FromPoint($pos).WorkingArea
+    $x = [int][math]::Min([math]::Max($pos.X - $popup.Width / 2, $wa.Left), $wa.Right - $popup.Width)
+    $y = [int]$(if ($pos.Y -gt ($wa.Top + $wa.Bottom) / 2) { $pos.Y - $popup.Height - 12 } else { $pos.Y + 12 })
+    $popup.Location = New-Object System.Drawing.Point $x, $y
+    $popup.Show()
+    $popup.Activate()
+    $popupHide.Stop(); $popupHide.Start()
+}
+
+$ni.add_MouseClick({
+    param($s, $e)
+    if ($e.Button -eq [System.Windows.Forms.MouseButtons]::Left) {
+        try { Show-TopPopup } catch { TLog "popup failed: $($_.Exception.Message)" 'ERROR' }
+    }
+})
+
 # ---- live update + queue drain (on the timer tick) -------------------------
 function Update-FromStatus {
     $st = Get-PWStatus
@@ -199,6 +269,7 @@ try {
 }
 finally {
     $timer.Stop(); $timer.Dispose()
+    $popupHide.Stop(); $popupHide.Dispose(); $popup.Dispose()
     $ni.Visible = $false; $ni.Dispose()
     $mutex.ReleaseMutex(); $mutex.Dispose()
     TLog 'tray stopped'

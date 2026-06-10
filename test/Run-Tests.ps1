@@ -159,6 +159,30 @@ try {
         $n = Get-PWNotifyFiles | ForEach-Object { Get-Content $_.FullName -Raw | ConvertFrom-Json }
         ($n | Where-Object { $_.kind -eq 'breach' -and $_.pid -eq $hog.Id }).Count -ge 1
     }
+
+    Write-Host "`n[8] Heartbeat top processes (rolling window)"
+    # The hog has burned a full core since [3]. Kill it mid-run: the engine's
+    # rolling window still holds its samples, but it's gone from the snapshot -
+    # so it must appear in 'top' with alive=false (the tray greys these out).
+    # The stopped-marker now preserves the last full status, so we can assert
+    # on status.json after a clean MaxIterations exit.
+    $killer = Start-Job -ScriptBlock { param($hogId) Start-Sleep -Seconds 6; Stop-Process -Id $hogId -Force } -ArgumentList $hog.Id
+    & (Join-Path $bin 'Engine.ps1') -MaxIterations 7 | Out-Null
+    Receive-Job $killer -Wait -ErrorAction SilentlyContinue | Out-Null
+    Remove-Job $killer -Force -ErrorAction SilentlyContinue
+    $st = Get-PWStatus
+    Check 'heartbeat carries a top-processes list (<= 3, well-formed)' {
+        $t = @($st.top)
+        $t.Count -ge 1 -and $t.Count -le 3 -and
+            ($t | Where-Object { $_.name -and $_.pid -and $null -ne $_.pct -and $null -ne $_.alive }).Count -eq $t.Count
+    }
+    Check 'dead hog still listed in top, flagged alive=false' {
+        $entry = @($st.top) | Where-Object { $_.pid -eq $hog.Id }
+        $entry -and (-not $entry.alive)
+    }
+    Check 'stopped marker preserved the full status' {
+        $st.stopped -eq $true -and $st.watching -gt 0
+    }
 }
 finally {
     if ($hog) { Stop-Process -Id $hog.Id -Force -ErrorAction SilentlyContinue }

@@ -22,6 +22,13 @@ All notable changes to ProcWatch are documented here. This project adheres to
 - **Pause / Resume** — new `pause`/`resume` commands and a `paused` config flag.
   When paused the engine still samples and heartbeats but takes no action, so
   resuming is instant. Event IDs 1005.
+- **Top-processes flyout** — left-clicking the tray icon shows the top 3
+  processes of the last 60 s by overall (machine-wide) compute, fed by a rolling
+  per-process CPU window the engine publishes in the heartbeat. Processes that
+  burned CPU in the window but have since exited stay listed, muted grey and
+  marked "ended". The window keeps accumulating while monitoring is paused, and
+  the engine's exit marker preserves the last full status instead of a bare
+  "stopped" stub.
 - `Get-PWVersion`, `Write-PWStatus`, `Get-PWStatus` helpers in the module.
 
 ### Changed
