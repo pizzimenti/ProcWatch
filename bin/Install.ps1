@@ -74,19 +74,26 @@ catch { Write-Warning "Event source registration failed: $($_.Exception.Message)
 
 # ---- BurntToast for the tray's host (Windows PowerShell 5.1) ----------------
 # The tray runs under 5.1, so BurntToast must be on 5.1's AllUsers module path.
-# We shell out to powershell.exe to install it there (best effort; the tray
-# degrades to balloon tips if this fails, e.g. offline).
+# 5.1's own Install-Module first bootstraps the NuGet provider, which has proven
+# slow and hang-prone - so when pwsh 7 is available we let its PowerShellGet
+# download the module straight into 5.1's path instead. Best effort either way;
+# the tray degrades to balloon tips if the module is missing.
 try {
-    $btCheck = & $TrayInterp -NoProfile -Command "[bool](Get-Module -ListAvailable BurntToast)"
-    if ($btCheck -ne 'True') {
-        Write-Host 'Installing BurntToast into Windows PowerShell 5.1 (AllUsers)...'
-        & $TrayInterp -NoProfile -Command @'
+    & $TrayInterp -NoProfile -Command "exit [int](-not (Get-Module -ListAvailable BurntToast))"
+    if ($LASTEXITCODE -ne 0) {
+        Write-Host 'Installing BurntToast for Windows PowerShell 5.1...'
+        $btDst = Join-Path $env:ProgramFiles 'WindowsPowerShell\Modules'   # 5.1 AllUsers module path
+        if (Test-Path $pwsh) {
+            & $pwsh -NoProfile -Command "Save-Module BurntToast -Path '$btDst' -Force"
+        } else {
+            & $TrayInterp -NoProfile -Command @'
 [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
 if (-not (Get-PackageProvider -Name NuGet -ErrorAction SilentlyContinue)) {
     Install-PackageProvider -Name NuGet -MinimumVersion 2.8.5.201 -Force -Scope AllUsers | Out-Null
 }
 Install-Module BurntToast -Scope AllUsers -Force -AllowClobber
 '@
+        }
         Write-Host 'BurntToast installed for 5.1.'
     } else { Write-Host 'BurntToast already present on 5.1.' }
 } catch {

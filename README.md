@@ -25,7 +25,7 @@ separate processes that talk through files.
 | `Tray.ps1` | **you** (interactive) | Windows PowerShell 5.1 `-STA` | at logon | system-tray icon + menu; raise interactive BurntToast toasts |
 | `Handler.ps1` | you | pwsh 7 | `procwatch://` protocol | translate toast-button clicks into command files |
 
-```
+```text
 %ProgramData%\ProcWatch\
   config.json            thresholds, allowlists, whitelist, paused (editable; engine reloads each loop)
   status.json            engine heartbeat   (engine writes, tray reads)

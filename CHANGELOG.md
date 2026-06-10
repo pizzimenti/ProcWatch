@@ -34,7 +34,12 @@ All notable changes to ProcWatch are documented here. This project adheres to
   reboot); a surviving pre-0.2.0 agent would also compete with the tray for the
   notify queue. It also removes the superseded `Agent.ps1` from the install dir.
 - Installer grants Users:Modify on `config.json` so the tray's "Edit config"
-  can save without elevation.
+  can save without elevation, and `Save-PWConfig` re-asserts that ACE after its
+  atomic tmp-and-rename replace (which otherwise drops it — review credit:
+  Codex on PR #1).
+- BurntToast is fetched via pwsh 7's `Save-Module` directly into 5.1's AllUsers
+  module path when pwsh 7 is present; 5.1's own NuGet-provider bootstrap proved
+  hang-prone and remains only as the fallback.
 - Engine single-instance mutex name is now derived from the data root, so a
   sandboxed test instance can never collide with the deployed SYSTEM engine's
   mutex (previously caused an "Access denied" when tests ran alongside the
