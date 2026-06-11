@@ -62,11 +62,13 @@ Write-Host "Config: $(Join-Path $Root 'config.json')"
 & icacls "$Queue" /grant '*S-1-5-32-545:(OI)(CI)M' /T /Q | Out-Null
 Write-Host "Granted Users:Modify on $Queue"
 
-# config.json too, so the tray's "Edit config" can save without elevation.
-# (Users can already steer the engine through the command queue, so this adds
-# no privilege they don't effectively have.)
-& icacls (Join-Path $Root 'config.json') /grant '*S-1-5-32-545:M' /Q | Out-Null
-Write-Host "Granted Users:Modify on config.json"
+# config.json stays admin-writable ONLY: the engine's kill path trusts
+# protectNames from it, so a user-writable config would let any local user
+# strip the guard and kill protected processes via the (user-writable) command
+# queue. Earlier 0.2.0 builds briefly granted Users:Modify here - remove the
+# ACE on upgrade. The tray's "Edit config" elevates via UAC instead.
+& icacls (Join-Path $Root 'config.json') /remove '*S-1-5-32-545' /Q | Out-Null
+Write-Host "config.json kept admin-writable only"
 
 # ---- event-log source ------------------------------------------------------
 try { Register-PWEventSource; Write-Host 'Registered event source ProcWatch (Application log)' }
@@ -136,8 +138,12 @@ Write-Host "Registered task: $engineName (SYSTEM, at startup)"
 $trayAction = New-ScheduledTaskAction -Execute $TrayInterp `
     -Argument ('-STA -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File "{0}"' -f (Join-Path $BinDst 'Tray.ps1'))
 $trayTrigger = New-ScheduledTaskTrigger -AtLogOn
+# RestartCount/-Interval: the tray's hidden console can be torn down by console
+# control events outside our control (observed in the wild as exit 0xC000013A);
+# a failure exit makes Task Scheduler relaunch it, so the icon self-heals.
 $traySettings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries `
-    -StartWhenAvailable -MultipleInstances IgnoreNew -ExecutionTimeLimit ([TimeSpan]::Zero) -Hidden
+    -StartWhenAvailable -MultipleInstances IgnoreNew -ExecutionTimeLimit ([TimeSpan]::Zero) -Hidden `
+    -RestartCount 10 -RestartInterval (New-TimeSpan -Minutes 1)
 $trayPrincipal = New-ScheduledTaskPrincipal -GroupId 'S-1-5-32-545' -RunLevel Limited
 Register-ScheduledTask -TaskName $trayName -Action $trayAction -Trigger $trayTrigger `
     -Settings $traySettings -Principal $trayPrincipal `

@@ -275,6 +275,12 @@ try {
                 $st.OverSince  = $now   # reset window so we re-measure before re-firing
             }
         }
+        elseif ($cfg.paused) {
+            # clear over-threshold streaks while paused: a streak that started
+            # before the pause must not count the paused interval as sustained
+            # high CPU and fire instantly on the first post-resume spike
+            foreach ($s in $state.Values) { $s.OverSince = $null }
+        }
 
         # prune state for dead PIDs
         foreach ($deadId in @($state.Keys | Where-Object { -not $curr.ContainsKey($_) })) {

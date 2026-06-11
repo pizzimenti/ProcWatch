@@ -107,7 +107,12 @@ $miPause.add_Click({
     if ($st -and $st.paused) { New-PWCommand @{ type = 'resume' } | Out-Null; TLog 'requested resume' 'ACTION' }
     else                     { New-PWCommand @{ type = 'pause'  } | Out-Null; TLog 'requested pause'  'ACTION' }
 })
-$miConfig.add_Click({ Start-Process notepad.exe (Join-Path (Get-PWRoot) 'config.json') })
+$miConfig.add_Click({
+    # config.json is admin-writable only (it carries the engine's protection
+    # policy), so editing elevates via UAC; declining the prompt is fine.
+    try { Start-Process notepad.exe (Join-Path (Get-PWRoot) 'config.json') -Verb RunAs }
+    catch { TLog 'config edit cancelled at UAC prompt' 'WARN' }
+})
 $miLogs.add_Click({ Start-Process explorer.exe (Get-PWRoot) })
 $miActivity.add_Click({
     $log = Join-Path (Get-PWRoot) 'procwatch.log'

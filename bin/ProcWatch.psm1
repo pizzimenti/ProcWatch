@@ -71,10 +71,6 @@ function Save-PWConfig {
     $tmp = "$script:ConfigPath.tmp"
     $Config | ConvertTo-Json -Depth 6 | Set-Content -Path $tmp -Encoding UTF8
     Move-Item -Path $tmp -Destination $script:ConfigPath -Force
-    # The atomic replace gives config.json the tmp file's inherited ACL,
-    # silently dropping the explicit Users:Modify ACE the installer grants
-    # (needed by the tray's "Edit config") - re-assert it on every save.
-    & icacls $script:ConfigPath /grant '*S-1-5-32-545:M' /Q | Out-Null
 }
 
 # ---- Status heartbeat (engine -> tray) -------------------------------------

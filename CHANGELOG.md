@@ -40,10 +40,17 @@ All notable changes to ProcWatch are documented here. This project adheres to
   newly started engine exit silently (the upgrade only took effect at the next
   reboot); a surviving pre-0.2.0 agent would also compete with the tray for the
   notify queue. It also removes the superseded `Agent.ps1` from the install dir.
-- Installer grants Users:Modify on `config.json` so the tray's "Edit config"
-  can save without elevation, and `Save-PWConfig` re-asserts that ACE after its
-  atomic tmp-and-rename replace (which otherwise drops it — review credit:
-  Codex on PR #1).
+- `config.json` stays admin-writable only and the tray's "Edit config" elevates
+  via UAC: the engine's kill path trusts `protectNames` from the config, so a
+  user-writable config would let any local user strip the guard and kill
+  protected processes through the user-writable command queue (hardened after
+  review on PR #1; an earlier 0.2.0 build's Users:Modify ACE is removed on
+  upgrade).
+- Pausing clears in-flight over-threshold streaks, so a streak that started
+  before a pause can never count the paused interval as sustained high CPU and
+  fire instantly on the first post-resume spike (review credit: Codex).
+- The tray task auto-restarts on failure (its hidden console can be torn down
+  by console-control events outside our control), so the icon self-heals.
 - BurntToast is fetched via pwsh 7's `Save-Module` directly into 5.1's AllUsers
   module path when pwsh 7 is present; 5.1's own NuGet-provider bootstrap proved
   hang-prone and remains only as the fallback.
