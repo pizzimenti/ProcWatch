@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="docs/header.png" alt="ProcWatch — sustained-CPU process watchdog for Windows">
+</p>
+
 # ProcWatch
 
 ![version](https://img.shields.io/badge/version-0.2.0-blue)

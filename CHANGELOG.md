@@ -10,7 +10,7 @@ All notable changes to ProcWatch are documented here. This project adheres to
 - **System-tray app (`Tray.ps1`)** running in the interactive user session under
   Windows PowerShell 5.1 `-STA`:
   - State-coloured tray icon (green = monitoring, amber = paused / recent breach,
-    grey = engine down/stale), generated at runtime (no binary assets in the repo).
+    grey = engine down/stale), generated at runtime (no `.ico` assets to ship).
   - Context menu: Pause/Resume monitoring, Edit config, Open logs folder, Recent
     activity, About, Exit.
   - Subsumes the old headless agent — it now both shows status and raises the
