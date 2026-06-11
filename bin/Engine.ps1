@@ -23,7 +23,11 @@ function Log {
 }
 
 # ---- single-instance guard -------------------------------------------------
-$mutex = New-Object System.Threading.Mutex($false, 'Global\ProcWatchEngine')
+# The mutex name is derived from the data root, so it is unique per install. A
+# sandboxed test engine (different %ProgramData%) therefore never collides with
+# a deployed SYSTEM engine's mutex - which a non-SYSTEM process can't even open.
+$mutexName = 'Global\ProcWatch-Engine-' + ((Get-PWRoot) -replace '[\\:]', '_')
+$mutex = New-Object System.Threading.Mutex($false, $mutexName)
 if (-not $mutex.WaitOne(0)) {
     Log 'another engine instance is already running; exiting' 'WARN'
     return
@@ -37,6 +41,15 @@ $prev        = @{}   # pid -> @{ Cpu(ms); Time; Name; Start }
 $state       = @{}   # pid -> @{ Name; FirstSeen; OverSince; LastNotify }
 $restarts    = @{}   # name -> [datetime[]] recent restart times
 $ignorePids  = New-Object System.Collections.Generic.HashSet[int]  # session-scoped "ignore this instance"
+$lastBreach  = $null # most recent breach summary, surfaced in the heartbeat for the tray
+$breachCount = 0     # breaches fired since this engine started
+$lastStatus  = $null # last heartbeat written; re-published with stopped=true on exit
+
+# Rolling per-process CPU window for the tray's "top processes" popup. Each
+# entry is one sample cycle's usage; entries older than the window are dropped.
+$TopWindowSeconds = 60
+$TopCount         = 3
+$cpuWindow = New-Object System.Collections.Generic.Queue[object]
 
 function Get-Snapshot {
     $snap = @{}
@@ -104,6 +117,22 @@ function Invoke-Commands {
                 [void]$ignorePids.Add($ip)
                 Log "ignoring pid $ip for this session" 'ACTION'
             }
+            'pause' {
+                if (-not $Cfg.paused) {
+                    $Cfg.paused = $true
+                    Save-PWConfig $Cfg
+                    Log 'monitoring PAUSED by user (tray)' 'ACTION'
+                    Write-PWEvent 'Monitoring paused by user' 1005 'Information'
+                }
+            }
+            'resume' {
+                if ($Cfg.paused) {
+                    $Cfg.paused = $false
+                    Save-PWConfig $Cfg
+                    Log 'monitoring RESUMED by user (tray)' 'ACTION'
+                    Write-PWEvent 'Monitoring resumed by user' 1005 'Information'
+                }
+            }
             default { Log "unknown command type '$($cmd.type)'" 'WARN' }
         }
     }
@@ -153,7 +182,25 @@ try {
         $now  = Get-Date
         $curr = Get-Snapshot
 
-        if ($prev.Count -gt 0) {
+        # accumulate this cycle's per-process CPU into the rolling top window.
+        # Deliberately NOT gated on paused: the tray's top-processes popup stays
+        # live even while detection is paused.
+        $winUsage = @{}
+        foreach ($procId in $curr.Keys) {
+            if (-not $prev.ContainsKey($procId)) { continue }
+            $c = $curr[$procId]; $p = $prev[$procId]
+            if ($c.Start -ne $p.Start) { continue }   # PID reuse
+            $ms = $c.Cpu - $p.Cpu
+            if ($ms -gt 0) { $winUsage[$procId] = @{ Name = $c.Name; Ms = $ms } }
+        }
+        $cpuWindow.Enqueue(@{ Time = $now; Usage = $winUsage })
+        while ($cpuWindow.Count -gt 0 -and ($now - $cpuWindow.Peek().Time).TotalSeconds -gt $TopWindowSeconds) {
+            [void]$cpuWindow.Dequeue()
+        }
+
+        # When paused (via the tray) we still sample and publish a heartbeat, but
+        # take no detection action — so resuming is instant and the tray stays live.
+        if (-not $cfg.paused -and $prev.Count -gt 0) {
             foreach ($procId in $curr.Keys) {
                 if (-not $prev.ContainsKey($procId)) { continue }
                 $c = $curr[$procId]; $p = $prev[$procId]
@@ -204,6 +251,13 @@ try {
                 Write-PWEvent ("Sustained CPU breach: {0} (pid {1}) {2:n1}% for {3:n0}s" -f `
                         $c.Name, $procId, $rate, $sustained) 1000 'Warning'
 
+                # record for the heartbeat so the tray can surface "last breach"
+                $breachCount++
+                $lastBreach = @{
+                    name = $c.Name; pid = $procId; rate = [math]::Round($rate,1)
+                    at = $now.ToString('o')
+                }
+
                 $handled = $false
                 if (($cfg.restartAllowlist -contains $c.Name) -and -not (Test-Protected $c.Name $cfg)) {
                     $handled = Invoke-RestartExplorerClass @{ Name=$c.Name } $cfg $rate
@@ -221,11 +275,57 @@ try {
                 $st.OverSince  = $now   # reset window so we re-measure before re-firing
             }
         }
+        elseif ($cfg.paused) {
+            # clear over-threshold streaks while paused: a streak that started
+            # before the pause must not count the paused interval as sustained
+            # high CPU and fire instantly on the first post-resume spike
+            foreach ($s in $state.Values) { $s.OverSince = $null }
+        }
 
         # prune state for dead PIDs
         foreach ($deadId in @($state.Keys | Where-Object { -not $curr.ContainsKey($_) })) {
             $state.Remove($deadId) | Out-Null
         }
+
+        # top processes over the rolling window, by total CPU time consumed.
+        # pct is machine-wide ("overall compute"); alive=false marks a process
+        # that burned CPU within the window but has since exited.
+        $agg = @{}
+        foreach ($entry in $cpuWindow) {
+            foreach ($procId in $entry.Usage.Keys) {
+                $u = $entry.Usage[$procId]
+                if (-not $agg.ContainsKey($procId)) { $agg[$procId] = @{ Name = $u.Name; Ms = 0.0 } }
+                $agg[$procId].Ms += $u.Ms
+            }
+        }
+        $spanSec = [math]::Max(($now - $cpuWindow.Peek().Time).TotalSeconds, 1.0)
+        $top = @($agg.GetEnumerator() | Sort-Object { $_.Value.Ms } -Descending |
+            Select-Object -First $TopCount | ForEach-Object {
+                @{
+                    name  = $_.Value.Name
+                    pid   = $_.Key
+                    pct   = [math]::Round(($_.Value.Ms / ($spanSec * 1000.0 * $cores)) * 100, 1)
+                    alive = $curr.ContainsKey($_.Key)
+                }
+            })
+
+        # publish heartbeat for the tray (atomic write via the module)
+        $lastStatus = @{
+            version     = Get-PWVersion
+            pid         = $PID
+            heartbeat   = $now.ToString('o')        # tray compares against this for freshness
+            paused      = [bool]$cfg.paused
+            interval    = $cfg.intervalSeconds
+            threshold   = $cfg.thresholdPercent
+            basis       = $cfg.cpuBasis
+            duration    = $cfg.durationSeconds
+            watching    = $curr.Count               # processes seen this cycle
+            breachCount = $breachCount
+            lastBreach  = $lastBreach
+            top         = $top
+            topWindow   = $TopWindowSeconds
+        }
+        Write-PWStatus $lastStatus
 
         $prev = $curr
         $iter++
@@ -242,6 +342,15 @@ catch {
     throw
 }
 finally {
+    # final heartbeat marks a clean stop so the tray flips to "down" at once.
+    # Re-publish the last full status (top processes, counts) with stopped=true
+    # rather than a bare marker, so observers keep the last-known picture.
+    try {
+        $final = if ($lastStatus) { $lastStatus } else { @{ version = (Get-PWVersion); pid = $PID } }
+        $final.stopped   = $true
+        $final.heartbeat = (Get-Date).ToString('o')
+        Write-PWStatus $final
+    } catch { }
     $mutex.ReleaseMutex()
     $mutex.Dispose()
     Log 'engine stopped' 'INFO'
